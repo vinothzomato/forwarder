@@ -1,16 +1,23 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 )
 
 const ForwarderPrefix = "FORWARDER_"
 
+var replaces map[string]string
 var Version string
 
 // Get the env variables required for a reverse proxy
@@ -18,6 +25,8 @@ func init() {
 	fmt.Printf("forwarder %s\n", Version)
 	log.Printf("Server will run on: %s\n", getListenAddress())
 	log.Printf("Proxy backend: %s\n", getProxyBackend())
+	replaces = getReplace()
+	log.Printf("Replace: %v\n", replaces)
 }
 
 // Get env var or default
@@ -32,6 +41,18 @@ func getEnv(key, fallback string) string {
 func getListenAddress() string {
 	port := getEnv("PORT", "8888")
 	return "0.0.0.0:" + port
+}
+
+func getReplace() map[string]string {
+	out := map[string]string{}
+	splits := strings.Split(getEnv("REPLACE", ""), ",")
+	for _, split := range splits {
+		inSplits := strings.Split(split, "=")
+		if len(inSplits) == 2 {
+			out[inSplits[0]] = inSplits[1]
+		}
+	}
+	return out
 }
 
 // Get the backend host and port
@@ -51,6 +72,7 @@ func serveReverseProxy(target string, res http.ResponseWriter, req *http.Request
 
 	// create the reverse proxy
 	proxy := httputil.NewSingleHostReverseProxy(url)
+	proxy.Transport = &transport{http.DefaultTransport}
 
 	// Update the headers to allow for SSL redirection
 	req.URL.Host = url.Host
@@ -67,6 +89,61 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	serveReverseProxy(url, res, req)
 }
 
+type transport struct {
+	http.RoundTripper
+}
+
+func (t *transport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
+	resp, err = t.RoundTripper.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var reader io.ReadCloser
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		reader, err = gzip.NewReader(resp.Body)
+		defer reader.Close()
+	default:
+		reader = resp.Body
+	}
+
+	b, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	for replace, value := range replaces {
+		b = bytes.ReplaceAll(b, []byte(replace), []byte(value))
+	}
+
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		var gzipBytes bytes.Buffer
+		w := gzip.NewWriter(&gzipBytes)
+		w.Write(b)
+		defer w.Close()
+		body := ioutil.NopCloser(bytes.NewReader(gzipBytes.Bytes()))
+		len := len(gzipBytes.Bytes())
+		resp.Body = body
+		resp.Body = body
+		resp.ContentLength = int64(len)
+		resp.Header.Set("Content-Length", strconv.Itoa(len))
+	default:
+		body := ioutil.NopCloser(bytes.NewReader(b))
+		resp.Body = body
+		resp.ContentLength = int64(len(b))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
+	}
+
+	return resp, nil
+}
+
+func pingHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "pong")
+}
+
 /*
 	Entry
 */
@@ -81,6 +158,7 @@ func main() {
 		}
 	} else {
 		// start server
+		http.HandleFunc("/ping", pingHandler)
 		http.HandleFunc("/", handleRequestAndRedirect)
 		if err := http.ListenAndServe(getListenAddress(), nil); err != nil {
 			panic(err)
