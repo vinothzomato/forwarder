@@ -1,2 +1,2 @@
 #!/bin/sh
-echo "v0.0.2"
+echo ${TAG:-v0.0.3}
