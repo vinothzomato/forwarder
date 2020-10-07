@@ -18,10 +18,10 @@ help: ## This help.
 # DOCKER TASKS
 # Build the container
 build: ## Build the container
-	docker build -t $(APP_NAME) .
+	docker build --build-arg TAG=${TAG} -t $(APP_NAME) .
 
 build-nc: ## Build the container without caching
-	docker build --no-cache -t $(APP_NAME) .
+	docker build --no-cache --build-arg TAG=${TAG} -t $(APP_NAME) .
 
 run: ## Run container on port configured in `config.env`
 	docker run -i -t --rm -e FORWARDER_PORT=$(FORWARDER_PORT) -p=$(FORWARDER_PORT):$(FORWARDER_PORT) --name="$(APP_NAME)" $(APP_NAME)
