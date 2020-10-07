@@ -17,6 +17,7 @@ import (
 
 const ForwarderPrefix = "FORWARDER_"
 
+var excludeExenions []string
 var replaces map[string]string
 var Version string
 
@@ -27,6 +28,12 @@ func init() {
 	log.Printf("Proxy backend: %s\n", getProxyBackend())
 	replaces = getReplace()
 	log.Printf("Replace: %v\n", replaces)
+	exes := getExcludeExtensions()
+	if len(exes) > 0 {
+		excludeExenions = exes
+	} else {
+		excludeExenions = []string{"jpg", "js", "css", "png", "webp", "jpeg"}
+	}
 }
 
 // Get env var or default
@@ -53,6 +60,10 @@ func getReplace() map[string]string {
 		}
 	}
 	return out
+}
+
+func getExcludeExtensions() []string {
+	return strings.Split(getEnv("EXCLUDE_EXTENSIONS", ""), ",")
 }
 
 // Get the backend host and port
@@ -98,13 +109,13 @@ func (t *transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	var reader io.ReadCloser
 	switch resp.Header.Get("Content-Encoding") {
 	case "gzip":
 		reader, err = gzip.NewReader(resp.Body)
 		defer reader.Close()
+		resp.Header.Del("Content-Encoding")
 	default:
 		reader = resp.Body
 	}
@@ -113,29 +124,19 @@ func (t *transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	if err != nil {
 		return nil, err
 	}
+	err = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
 
 	for replace, value := range replaces {
 		b = bytes.ReplaceAll(b, []byte(replace), []byte(value))
 	}
 
-	switch resp.Header.Get("Content-Encoding") {
-	case "gzip":
-		var gzipBytes bytes.Buffer
-		w := gzip.NewWriter(&gzipBytes)
-		w.Write(b)
-		defer w.Close()
-		body := ioutil.NopCloser(bytes.NewReader(gzipBytes.Bytes()))
-		len := len(gzipBytes.Bytes())
-		resp.Body = body
-		resp.Body = body
-		resp.ContentLength = int64(len)
-		resp.Header.Set("Content-Length", strconv.Itoa(len))
-	default:
-		body := ioutil.NopCloser(bytes.NewReader(b))
-		resp.Body = body
-		resp.ContentLength = int64(len(b))
-		resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
-	}
+	body := ioutil.NopCloser(bytes.NewReader(b))
+	resp.Body = body
+	resp.ContentLength = int64(len(b))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
 
 	return resp, nil
 }
