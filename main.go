@@ -19,6 +19,7 @@ const ForwarderPrefix = "FORWARDER_"
 
 var excludeExenions []string
 var replaces map[string]string
+var requestReplaces map[string]string
 var Version string
 
 // Get the env variables required for a reverse proxy
@@ -27,7 +28,9 @@ func init() {
 	log.Printf("Server will run on: %s\n", getListenAddress())
 	log.Printf("Proxy backend: %s\n", getProxyBackend())
 	replaces = getReplace()
+	requestReplaces = getRequestReplace()
 	log.Printf("Replace: %v\n", replaces)
+	log.Printf("Request Replace: %v\n", requestReplaces)
 	exes := getExcludeExtensions()
 	if len(exes) > 0 {
 		excludeExenions = exes
@@ -54,7 +57,19 @@ func getReplace() map[string]string {
 	out := map[string]string{}
 	splits := strings.Split(getEnv("REPLACE", ""), ",")
 	for _, split := range splits {
-		inSplits := strings.Split(split, "=")
+		inSplits := strings.Split(split, "==")
+		if len(inSplits) == 2 {
+			out[inSplits[0]] = inSplits[1]
+		}
+	}
+	return out
+}
+
+func getRequestReplace() map[string]string {
+	out := map[string]string{}
+	splits := strings.Split(getEnv("REQUEST_REPLACE", ""), ",")
+	for _, split := range splits {
+		inSplits := strings.Split(split, "==")
 		if len(inSplits) == 2 {
 			out[inSplits[0]] = inSplits[1]
 		}
@@ -85,10 +100,18 @@ func serveReverseProxy(target string, res http.ResponseWriter, req *http.Request
 	proxy := httputil.NewSingleHostReverseProxy(url)
 	proxy.Transport = &transport{http.DefaultTransport}
 
-	// Update the headers to allow for SSL redirection
 	req.URL.Host = url.Host
 	req.URL.Scheme = url.Scheme
 	req.Host = url.Host
+
+	for replace, value := range requestReplaces {
+		for header, headerValues := range req.Header {
+			req.Header.Del(header)
+			for _, headerValue := range headerValues {
+				req.Header.Add(header, strings.ReplaceAll(headerValue, replace, value))
+			}
+		}
+	}
 
 	// Note that ServeHttp is non blocking and uses a go routine under the hood
 	proxy.ServeHTTP(res, req)
@@ -131,6 +154,12 @@ func (t *transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 
 	for replace, value := range replaces {
 		b = bytes.ReplaceAll(b, []byte(replace), []byte(value))
+		for header, headerValues := range resp.Header {
+			resp.Header.Del(header)
+			for _, headerValue := range headerValues {
+				resp.Header.Add(header, strings.ReplaceAll(headerValue, replace, value))
+			}
+		}
 	}
 
 	body := ioutil.NopCloser(bytes.NewReader(b))
