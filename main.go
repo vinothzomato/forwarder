@@ -11,19 +11,26 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 )
 
+// ForwarderPrefix env prefix
 const ForwarderPrefix = "FORWARDER_"
 
 var excludeExenions []string
 var replaces map[string]string
 var requestReplaces map[string]string
+
+// Version version string for build info
 var Version string
 
 // Get the env variables required for a reverse proxy
 func init() {
+	if Version == "" {
+		Version = "dev"
+	}
 	fmt.Printf("forwarder %s\n", Version)
 	log.Printf("Server will run on: %s\n", getListenAddress())
 	log.Printf("Proxy backend: %s\n", getProxyBackend())
@@ -35,7 +42,7 @@ func init() {
 	if len(exes) > 0 {
 		excludeExenions = exes
 	} else {
-		excludeExenions = []string{"jpg", "js", "css", "png", "webp", "jpeg"}
+		excludeExenions = []string{"jpg", "png", "webp", "jpeg", "svg", "gif"}
 	}
 }
 
@@ -87,10 +94,6 @@ func getProxyBackend() string {
 	return proxyBackend
 }
 
-/*
-	Reverse Proxy Logic
-*/
-
 // Serve a reverse proxy for a given url
 func serveReverseProxy(target string, res http.ResponseWriter, req *http.Request) {
 	// parse the url
@@ -112,8 +115,6 @@ func serveReverseProxy(target string, res http.ResponseWriter, req *http.Request
 			}
 		}
 	}
-
-	// Note that ServeHttp is non blocking and uses a go routine under the hood
 	proxy.ServeHTTP(res, req)
 }
 
@@ -131,6 +132,17 @@ func (t *transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	resp, err = t.RoundTripper.RoundTrip(req)
 	if err != nil {
 		return nil, err
+	}
+
+	log.Printf("Request Method:%s URL:%s \n", req.Method, req.URL)
+
+	extensions := strings.Split(path.Base(req.URL.Path), ".")
+	extension := extensions[len(extensions)-1]
+
+	for i := range excludeExenions {
+		if ok := excludeExenions[i] == extension; ok {
+			return resp, nil
+		}
 	}
 
 	var reader io.ReadCloser
@@ -174,10 +186,7 @@ func pingHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "pong")
 }
 
-/*
-	Entry
-*/
-
+// entry main funtion
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
