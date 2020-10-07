@@ -3,6 +3,9 @@
 ########################################
 FROM golang:1.14.9-alpine as builder
 
+ARG TAG=v0.0.1
+ENV TAG=${TAG}
+
 # add a label to clean up later
 LABEL stage=intermediate
 
