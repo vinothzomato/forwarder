@@ -31,5 +31,4 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /go/src/forwarder-linux-amd64 ./forwarder-linux-amd64
 
-
 ENTRYPOINT ["./forwarder-linux-amd64"]
